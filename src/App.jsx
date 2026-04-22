@@ -89,17 +89,19 @@ function parseMedicines(str) {
   return results;
 }
 
-// ─── STORAGE ──────────────────────────────────────────────────────────────────
-// All storage is SHARED — same data for everyone using this published tool
-const SK   = "cosmo-final-sess";
-const STK  = "cosmo-final-sta";
-const URLK = "cosmo-final-url";
-const loadSess = async () => { try { const r=await window.storage.get(SK,  true); return r?JSON.parse(r.value):[]; } catch { return []; } };
-const saveSess = async s  => { try { await window.storage.set(SK,  JSON.stringify(s), true); } catch {} };
-const loadSta  = async () => { try { const r=await window.storage.get(STK, true); return r?JSON.parse(r.value):["Mangala","Ankura","Mayfair"]; } catch { return ["Mangala","Ankura","Mayfair"]; } };
-const saveSta  = async s  => { try { await window.storage.set(STK, JSON.stringify(s), true); } catch {} };
-const loadUrl  = async () => { try { const r=await window.storage.get(URLK, true); return r?r.value:""; } catch { return ""; } };
-const saveUrl  = async u  => { try { await window.storage.set(URLK, u, true); } catch {} };
+// ─── STORAGE — uses localStorage, works on Vercel ─────────────────────────────
+const SK   = "cosmo-sess";
+const STK  = "cosmo-sta";
+const URLK = "cosmo-url";
+const APIK = "cosmo-apikey";
+const loadSess = async () => { try { return JSON.parse(localStorage.getItem(SK)||"[]");    } catch { return []; } };
+const saveSess = async s  => { try { localStorage.setItem(SK,  JSON.stringify(s));         } catch {} };
+const loadSta  = async () => { try { return JSON.parse(localStorage.getItem(STK)||'["Mangala","Ankura","Mayfair"]'); } catch { return ["Mangala","Ankura","Mayfair"]; } };
+const saveSta  = async s  => { try { localStorage.setItem(STK, JSON.stringify(s));         } catch {} };
+const loadUrl  = async () => { try { return localStorage.getItem(URLK)||"";                } catch { return ""; } };
+const saveUrl  = async u  => { try { localStorage.setItem(URLK, u);                        } catch {} };
+const loadKey  = async () => { try { return localStorage.getItem(APIK)||"";                } catch { return ""; } };
+const saveKey  = async k  => { try { localStorage.setItem(APIK, k);                        } catch {} };
 
 // ─── GOOGLE SHEETS SYNC ───────────────────────────────────────────────────────
 async function syncToSheets(scriptUrl, sessions) {
@@ -190,9 +192,10 @@ RULES:
 Return ONLY valid JSON:
 {"form_type":"nurse","photo_section":"start","date":null,"station":null,"staff_name":null,"staff_contact":null,"shift":null,"login_time":null,"logout_time":null,"vehicle_no":null,"odometer_in":null,"odometer_out":null,"checklist":{"tablet_ok":null,"app_ok":null,"knows_lab_booking":null,"knows_patient_entry":null,"pricing_list":null,"handover_taken":null,"station_clean":null,"emergency_kit":null,"ppe_ready":null,"general_ok":null,"lights_ok":null,"tyres_ok":null,"gauges_ok":null,"fluids_ok":null,"oxygen_ok":null,"linen_ok":null,"drugs_ok":null},"summary":{"total_patients":null,"cash_collected":null,"upi_collected":null,"pending_followup":null,"handover_notes":null},"patients":[],"vehicle_remarks":null}`;
 
-async function extractPhoto(b64) {
+async function extractPhoto(b64, apiKey) {
+  if (!apiKey) throw new Error("No API key — add it in Google Sheets Setup tab");
   const res = await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST", headers:{"Content-Type":"application/json"},
+    method:"POST", headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
     body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2500,messages:[{role:"user",content:[
       {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
       {type:"text",text:PROMPT}
@@ -279,47 +282,60 @@ const Th=({c})=>(<th style={{padding:"10px 12px",textAlign:"left",fontSize:11,co
 const Td=({c,style={}})=>(<td style={{padding:"9px 12px",fontSize:12,color:T.t2,borderBottom:`1px solid ${T.border}`,verticalAlign:"middle",...style}}>{c}</td>);
 
 // ─── SETUP TAB ────────────────────────────────────────────────────────────────
-function SetupTab({scriptUrl,setScriptUrl}) {
+function SetupTab({scriptUrl,setScriptUrl,apiKey,setApiKey}) {
   const [url,setUrl]=useState(scriptUrl);
+  const [key,setKey]=useState(apiKey);
+  const [showKey,setShowKey]=useState(false);
   const [testing,setTesting]=useState(false);
   const [testResult,setTestResult]=useState(null);
   const [copied,setCopied]=useState(false);
 
-  const save=async()=>{ await saveUrl(url); setScriptUrl(url); };
-
+  const saveAll=async()=>{ await saveUrl(url); setScriptUrl(url); await saveKey(key); setApiKey(key); };
   const test=async()=>{
-    if(!url){setTestResult({ok:false,msg:"Enter the URL first"});return;}
+    if(!url){setTestResult({ok:false,msg:"Enter the Google Sheets URL first"});return;}
     setTesting(true); setTestResult(null);
-    try {
-      await fetch(url,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain"},body:JSON.stringify({sheetName:"_test",headers:["test"],rows:[["ping"]]})});
-      setTestResult({ok:true,msg:"Request sent. Check your Google Sheet — a _test tab should appear with 'ping'."});
-    } catch(e){setTestResult({ok:false,msg:"Failed: "+e.message});}
+    try{await fetch(url,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain"},body:JSON.stringify({sheetName:"_test",headers:["test"],rows:[["ping"]]})});setTestResult({ok:true,msg:"Request sent! Check your Google Sheet — a _test tab should appear with the word 'ping'."});}
+    catch(e){setTestResult({ok:false,msg:"Failed: "+e.message});}
     setTesting(false);
   };
-
-  const copyCode=()=>{ navigator.clipboard.writeText(APPS_SCRIPT_CODE); setCopied(true); setTimeout(()=>setCopied(false),2500); };
-
-  const steps=[
-    {n:"1",title:"Open your Google Sheet",body:"Go to sheets.google.com and open (or create) the sheet you want data to go into. This will become your master ledger — it will auto-create 4 tabs: Nurse Shifts, Driver Shifts, Patients, Inventory."},
-    {n:"2",title:"Open Apps Script",body:'In the Google Sheet menu: Extensions → Apps Script. A new tab opens with a code editor. Delete any existing code you see there.'},
-    {n:"3",title:"Paste the code below",body:"Copy the code below and paste it into the Apps Script editor. Then press the Save icon (💾) or Ctrl+S.",code:true},
-    {n:"4",title:"Deploy as Web App",body:"Click Deploy (top right) → New deployment → click the gear icon next to Type → select Web App → Set Execute as: Me → Set Who has access: Anyone → Click Deploy → Authorize when asked → Copy the Web App URL that appears."},
-    {n:"5",title:"Paste URL here",body:"Paste the URL you copied into the field below and click Save URL. After this, every Save in the Upload tab will automatically write to your Google Sheet."},
-  ];
+  const copyCode=()=>{navigator.clipboard.writeText(APPS_SCRIPT_CODE);setCopied(true);setTimeout(()=>setCopied(false),2500);};
 
   return(
     <div>
       <Card style={{padding:20,marginBottom:20,borderLeft:`4px solid ${T.pink}`,background:"#FFF8FC"}}>
         <div style={{fontWeight:800,fontSize:15,color:T.pink,marginBottom:4}}>One-time setup — do this once, syncs forever after</div>
-        <div style={{fontSize:13,color:T.t2}}>Follow these 5 steps. Takes about 5 minutes. After setup, every time coordinator saves records here, they go directly into your Google Sheet — no copy-paste needed.</div>
+        <div style={{fontSize:13,color:T.t2}}>Complete both sections below. Takes about 5 minutes total.</div>
       </Card>
 
-      {steps.map(s=>(
+      {/* Section A: API Key */}
+      <Card style={{marginBottom:12,overflow:"hidden"}}>
+        <div style={{display:"flex",gap:14,padding:"14px 16px",alignItems:"flex-start"}}>
+          <div style={{width:32,height:32,borderRadius:"50%",background:T.pink,color:"#fff",fontSize:15,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>A</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:14,color:T.t1,marginBottom:4}}>Anthropic API Key (for reading photos)</div>
+            <div style={{fontSize:13,color:T.t2,lineHeight:1.7,marginBottom:10}}>
+              Go to <b>console.anthropic.com</b> → API Keys → Create Key → copy it. This lets the tool read your shift form photos. Keep it private — don't share it.
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <input value={key} onChange={e=>setKey(e.target.value)} type={showKey?"text":"password"} placeholder="sk-ant-api03-…" style={{...selS,flex:1,minWidth:260,fontSize:12,fontFamily:mono}}/>
+              <Btn label={showKey?"Hide":"Show"} onClick={()=>setShowKey(s=>!s)} color="#EEE" textColor={T.t2} small/>
+            </div>
+            {key&&<div style={{marginTop:6,fontSize:11,color:T.ok}}>✓ API key entered</div>}
+          </div>
+        </div>
+      </Card>
+
+      {/* Section B: Google Sheets */}
+      {[
+        {n:"1",title:"Open your Google Sheet",body:"Go to sheets.google.com and open or create the sheet for your ledger. It will auto-create 4 tabs: Nurse Shifts, Driver Shifts, Patients, Inventory."},
+        {n:"2",title:"Open Apps Script",body:"In the sheet menu: Extensions → Apps Script. Code editor opens. Delete any existing code."},
+        {n:"3",title:"Paste this code",body:"Copy the code below, paste in Apps Script editor, press Ctrl+S to save.",code:true},
+        {n:"4",title:"Deploy as Web App",body:"Click Deploy → New deployment → click ⚙️ gear next to Type → Web App → Execute as: Me → Who has access: Anyone → Deploy → Authorize → copy the URL."},
+        {n:"5",title:"Paste URL + Save everything",body:"Paste the URL below, then click Save All Settings."},
+      ].map(s=>(
         <Card key={s.n} style={{marginBottom:12,overflow:"hidden"}}>
           <div style={{display:"flex",gap:14,padding:"14px 16px",alignItems:"flex-start"}}>
-            <div style={{width:32,height:32,borderRadius:"50%",background:T.brand,color:"#fff",fontSize:15,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              {s.n}
-            </div>
+            <div style={{width:32,height:32,borderRadius:"50%",background:T.brand,color:"#fff",fontSize:15,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{s.n}</div>
             <div style={{flex:1}}>
               <div style={{fontWeight:700,fontSize:14,color:T.t1,marginBottom:4}}>{s.title}</div>
               <div style={{fontSize:13,color:T.t2,lineHeight:1.7}}>{s.body}</div>
@@ -330,26 +346,28 @@ function SetupTab({scriptUrl,setScriptUrl}) {
                 </div>
               )}
               {s.n==="5"&&(
-                <div style={{marginTop:12,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-                  <input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" style={{...selS,width:"100%",maxWidth:460,fontSize:12}}/>
-                  <Btn label="Save URL" onClick={save} color={T.pink}/>
-                  <Btn label={testing?"Testing…":"Test Connection"} onClick={test} disabled={testing} color={T.brand}/>
+                <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:10}}>
+                  <input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" style={{...selS,fontSize:12}}/>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    <Btn label="💾 Save All Settings" onClick={saveAll} color={T.pink}/>
+                    <Btn label={testing?"Testing…":"Test Google Sheets Connection"} onClick={test} disabled={testing} color={T.brand}/>
+                  </div>
+                  {testResult&&(
+                    <div style={{padding:"10px 14px",borderRadius:8,background:testResult.ok?T.okBg:T.errBg,color:testResult.ok?T.ok:T.err,fontSize:12,fontWeight:600}}>
+                      {testResult.ok?"✓":"✗"} {testResult.msg}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
-          {s.n==="5"&&testResult&&(
-            <div style={{margin:"0 16px 12px",padding:"10px 14px",borderRadius:8,background:testResult.ok?T.okBg:T.errBg,color:testResult.ok?T.ok:T.err,fontSize:12,fontWeight:600}}>
-              {testResult.ok?"✓":"✗"} {testResult.msg}
-            </div>
-          )}
         </Card>
       ))}
 
-      {scriptUrl&&(
+      {(scriptUrl&&apiKey)&&(
         <Card style={{padding:14,borderLeft:`4px solid ${T.ok}`,background:T.okBg}}>
-          <div style={{fontWeight:700,color:T.ok,marginBottom:4}}>✓ Google Sheets sync is configured</div>
-          <div style={{fontSize:12,color:T.t2,wordBreak:"break-all"}}>{scriptUrl}</div>
+          <div style={{fontWeight:700,color:T.ok,marginBottom:4}}>✓ Fully configured — ready to use</div>
+          <div style={{fontSize:12,color:T.t2}}>API key saved · Google Sheets connected</div>
         </Card>
       )}
     </div>
@@ -357,7 +375,7 @@ function SetupTab({scriptUrl,setScriptUrl}) {
 }
 
 // ─── UPLOAD TAB ───────────────────────────────────────────────────────────────
-function UploadTab({stations,scriptUrl,onSaved}) {
+function UploadTab({stations,scriptUrl,apiKey,onSaved}) {
   const [items,setItems]=useState([]);
   const [dSta,setDSta]=useState(stations[0]||"");
   const [dDate,setDDate]=useState(now8());
@@ -381,11 +399,12 @@ function UploadTab({stations,scriptUrl,onSaved}) {
   const extractAll=async()=>{
     const todo=items.filter(i=>i.status==="pending"||i.status==="err");
     if(!todo.length)return;
+    if(!apiKey){alert("Add your Anthropic API key in the Google Sheets Setup tab first.");return;}
     setBusy(true); setSaveStatus(null);
     for(const item of todo){
       setItems(p=>p.map(i=>i.id===item.id?{...i,status:"reading"}:i));
-      try{const ext=await extractPhoto(item.b64);setItems(p=>p.map(i=>i.id===item.id?{...i,status:"done",ext}:i));}
-      catch{setItems(p=>p.map(i=>i.id===item.id?{...i,status:"err",err:"Could not read — try a clearer photo"}:i));}
+      try{const ext=await extractPhoto(item.b64,apiKey);setItems(p=>p.map(i=>i.id===item.id?{...i,status:"done",ext}:i));}
+      catch(e){setItems(p=>p.map(i=>i.id===item.id?{...i,status:"err",err:e.message||"Could not read — check API key and photo quality"}:i));}
     }
     setBusy(false);
   };
@@ -431,15 +450,14 @@ function UploadTab({stations,scriptUrl,onSaved}) {
   return(
     <div>
       {/* Status bar */}
-      {!scriptUrl&&(
-        <Card style={{padding:"10px 16px",marginBottom:16,borderLeft:`4px solid ${T.warn}`,background:T.warnBg,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-          <span style={{fontSize:13,color:T.warn,fontWeight:600}}>⚠️ Google Sheets not connected — data saves locally only</span>
-          <Badge label="Go to Setup tab to connect →" color={T.warn} bg={T.warnBg} style={{cursor:"pointer",border:`1px solid ${T.warn}`}}/>
+      {(!scriptUrl||!apiKey)&&(
+        <Card style={{padding:"10px 16px",marginBottom:16,borderLeft:`4px solid ${T.warn}`,background:T.warnBg}}>
+          <span style={{fontSize:13,color:T.warn,fontWeight:600}}>⚠️ Setup not complete — go to Google Sheets Setup tab first</span>
         </Card>
       )}
-      {scriptUrl&&(
+      {scriptUrl&&apiKey&&(
         <Card style={{padding:"10px 16px",marginBottom:16,borderLeft:`4px solid ${T.ok}`,background:T.okBg}}>
-          <span style={{fontSize:13,color:T.ok,fontWeight:600}}>✓ Google Sheets connected — saves will auto-sync</span>
+          <span style={{fontSize:13,color:T.ok,fontWeight:600}}>✓ Ready — photos will be read and synced to Google Sheets automatically</span>
         </Card>
       )}
 
@@ -819,19 +837,19 @@ export default function App() {
   const [sessions,setSessions]=useState([]);
   const [stations,setStations]=useState(["Mangala","Ankura","Mayfair"]);
   const [scriptUrl,setScriptUrlState]=useState("");
+  const [apiKey,setApiKeyState]=useState("");
   const [loaded,setLoaded]=useState(false);
 
   useEffect(()=>{
-    Promise.all([loadSess(),loadSta(),loadUrl()]).then(([s,st,u])=>{
-      setSessions(s); setStations(st);
-      setScriptUrlState(u);
-      // If already set up, go straight to upload
-      if(u) setTab("upload");
+    Promise.all([loadSess(),loadSta(),loadUrl(),loadKey()]).then(([s,st,u,k])=>{
+      setSessions(s); setStations(st); setScriptUrlState(u); setApiKeyState(k);
+      if(u&&k) setTab("upload");
       setLoaded(true);
     });
   },[]);
 
   const setScriptUrl=useCallback(async u=>{ setScriptUrlState(u); await saveUrl(u); },[]);
+  const setApiKey=useCallback(async k=>{ setApiKeyState(k); await saveKey(k); },[]);
   const reload=useCallback(()=>loadSess().then(setSessions),[]);
 
   const hdr={
@@ -874,7 +892,7 @@ export default function App() {
                 color:tab===t.id?T.brand:"#9966BB",
                 borderRadius:tab===t.id?"8px 8px 0 0":"0",
               }}>{t.icon} {t.label}
-              {t.id==="setup"&&!scriptUrl&&<span style={{marginLeft:5,background:T.pink,color:"#fff",borderRadius:"50%",fontSize:9,padding:"1px 5px",fontWeight:800}}>!</span>}
+              {t.id==="setup"&&(!scriptUrl||!apiKey)&&<span style={{marginLeft:5,background:T.pink,color:"#fff",borderRadius:"50%",fontSize:9,padding:"1px 5px",fontWeight:800}}>!</span>}
               </button>
             ))}
           </div>
@@ -883,8 +901,8 @@ export default function App() {
 
       {/* Content */}
       <div style={{maxWidth:1200,margin:"0 auto",padding:"24px 20px"}}>
-        {tab==="setup"     &&<SetupTab scriptUrl={scriptUrl} setScriptUrl={setScriptUrl}/>}
-        {tab==="upload"    &&<UploadTab stations={stations} scriptUrl={scriptUrl} onSaved={reload}/>}
+        {tab==="setup"     &&<SetupTab scriptUrl={scriptUrl} setScriptUrl={setScriptUrl} apiKey={apiKey} setApiKey={setApiKey}/>}
+        {tab==="upload"    &&<UploadTab stations={stations} scriptUrl={scriptUrl} apiKey={apiKey} onSaved={reload}/>}
         {tab==="reports"   &&<ReportsTab sessions={sessions} stations={stations}/>}
         {tab==="attendance"&&<AttendanceTab sessions={sessions}/>}
         {tab==="inventory" &&<InventoryTab sessions={sessions}/>}
