@@ -193,16 +193,24 @@ Return ONLY valid JSON:
 {"form_type":"nurse","photo_section":"start","date":null,"station":null,"staff_name":null,"staff_contact":null,"shift":null,"login_time":null,"logout_time":null,"vehicle_no":null,"odometer_in":null,"odometer_out":null,"checklist":{"tablet_ok":null,"app_ok":null,"knows_lab_booking":null,"knows_patient_entry":null,"pricing_list":null,"handover_taken":null,"station_clean":null,"emergency_kit":null,"ppe_ready":null,"general_ok":null,"lights_ok":null,"tyres_ok":null,"gauges_ok":null,"fluids_ok":null,"oxygen_ok":null,"linen_ok":null,"drugs_ok":null},"summary":{"total_patients":null,"cash_collected":null,"upi_collected":null,"pending_followup":null,"handover_notes":null},"patients":[],"vehicle_remarks":null}`;
 
 async function extractPhoto(b64, apiKey) {
-  if (!apiKey) throw new Error("No API key — add it in Google Sheets Setup tab");
-  const res = await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST", headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2500,messages:[{role:"user",content:[
-      {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-      {type:"text",text:PROMPT}
-    ]}]})
-  });
+  if (!apiKey) throw new Error("No API key — add your Gemini key in the Setup tab");
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+    {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        contents:[{parts:[
+          {inline_data:{mime_type:"image/jpeg",data:b64}},
+          {text:PROMPT}
+        ]}],
+        generationConfig:{temperature:0,maxOutputTokens:2500}
+      })
+    }
+  );
   const d = await res.json();
-  const txt = d.content?.find(b=>b.type==="text")?.text||"{}";
+  if(d.error) throw new Error(d.error.message||"Gemini API error");
+  const txt = d.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
   return JSON.parse(txt.replace(/```json|```/g,"").trim());
 }
 
@@ -312,12 +320,14 @@ function SetupTab({scriptUrl,setScriptUrl,apiKey,setApiKey}) {
         <div style={{display:"flex",gap:14,padding:"14px 16px",alignItems:"flex-start"}}>
           <div style={{width:32,height:32,borderRadius:"50%",background:T.pink,color:"#fff",fontSize:15,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>A</div>
           <div style={{flex:1}}>
-            <div style={{fontWeight:700,fontSize:14,color:T.t1,marginBottom:4}}>Anthropic API Key (for reading photos)</div>
+            <div style={{fontWeight:700,fontSize:14,color:T.t1,marginBottom:4}}>Google Gemini API Key (free — for reading photos)</div>
             <div style={{fontSize:13,color:T.t2,lineHeight:1.7,marginBottom:10}}>
-              Go to <b>console.anthropic.com</b> → API Keys → Create Key → copy it. This lets the tool read your shift form photos. Keep it private — don't share it.
+              1. Go to <b>aistudio.google.com</b><br/>
+              2. Click <b>Get API Key</b> → Create API Key → copy it<br/>
+              3. Paste it below. Free, no credit card needed.
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-              <input value={key} onChange={e=>setKey(e.target.value)} type={showKey?"text":"password"} placeholder="sk-ant-api03-…" style={{...selS,flex:1,minWidth:260,fontSize:12,fontFamily:mono}}/>
+              <input value={key} onChange={e=>setKey(e.target.value)} type={showKey?"text":"password"} placeholder="AIzaSy…" style={{...selS,flex:1,minWidth:260,fontSize:12,fontFamily:mono}}/>
               <Btn label={showKey?"Hide":"Show"} onClick={()=>setShowKey(s=>!s)} color="#EEE" textColor={T.t2} small/>
             </div>
             {key&&<div style={{marginTop:6,fontSize:11,color:T.ok}}>✓ API key entered</div>}
