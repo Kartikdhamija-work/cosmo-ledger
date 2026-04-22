@@ -195,7 +195,7 @@ Return ONLY valid JSON:
 async function extractPhoto(b64, apiKey) {
   if (!apiKey) throw new Error("No API key — add your Gemini key in the Setup tab");
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
     {
       method:"POST",
       headers:{"Content-Type":"application/json"},
